@@ -148,6 +148,8 @@ a{color:var(--red-deep)}
 .stepper .val{width:54px; text-align:center; font-family:"Baloo 2"; font-size:24px; font-weight:800; color:var(--maroon); border:none; background:transparent; -moz-appearance:textfield}
 .stepper .val::-webkit-outer-spin-button,.stepper .val::-webkit-inner-spin-button{-webkit-appearance:none; margin:0}
 .stepper .val.pop{animation:pop-val .3s cubic-bezier(.2,1.5,.4,1)}
+.stepper .val::placeholder{color:var(--line-strong); font-weight:700}
+.stepper.invalid{outline:2px solid var(--red); outline-offset:2px; border-radius:16px}
 @keyframes pop-val{0%{transform:scale(1)}45%{transform:scale(1.35)}100%{transform:scale(1)}}
 .ticket-foot{padding:15px 20px calc(env(safe-area-inset-bottom,0px) + 16px); display:flex; align-items:center; gap:14px; background:var(--cream); border-top:2px dashed var(--line-strong)}
 .subtot{font-size:13px; color:var(--ink-soft); font-weight:600}
@@ -479,35 +481,41 @@ function renderJudge(){ if(session.role!=="judge")return; updateTop();
     c.onclick=function(){ openTeam(t); }; grid.appendChild(c); });
   w.appendChild(grid); a.appendChild(w); }
 function openTeam(t){ var round=CONFIG.active_round, ex=MY[sid(round,session.judge,t)];
-  jd.team=t; jd.draft={}; CATS[round].forEach(function(c){ jd.draft[c[0]] = ex ? Number(ex["c_"+c[0]]||0) : 0; }); renderTicket(); }
+  jd.team=t; jd.dirty=false; jd.draft={}; CATS[round].forEach(function(c){ jd.draft[c[0]] = ex ? Number(ex["c_"+c[0]]||0) : ""; }); renderTicket(); }
 
 function renderTicket(){ var round=CONFIG.active_round, t=jd.team, a=$("#app"); a.innerHTML="";
   var w=el('<div class="wrap"></div>');
-  var back=el('<button class="backlink">\u2039 All teams</button>'); back.onclick=function(){ jd.team=null; jd.draft=null; renderJudge(); }; w.appendChild(back);
+  var back=el('<button class="backlink">\u2039 All teams</button>'); back.onclick=function(){ if(jd.dirty && !confirm("Leave without saving? Your marks for this team won\u2019t be recorded.")) return; jd.team=null; jd.draft=null; jd.dirty=false; renderJudge(); }; w.appendChild(back);
   var tk=el('<div class="ticket"></div>');
   tk.appendChild(el('<div class="ticket-top"><div class="no">'+t+'</div><div class="info"><b>Team '+t+'</b><span>Round '+round+' \u00b7 '+esc(ROUND_TITLE[round])+' \u00b7 '+esc(judgeName(session.judge))+'</span></div></div>'));
   var body=el('<div class="ticket-body"></div>');
   function refresh(){ var s=$("#subtot"); if(s) s.textContent=fmt(catTotal(jd.draft,round)); }
+  var steppers={};
   CATS[round].forEach(function(c,idx){
     var row=el('<div class="crow'+(idx===5?" hero-cat":"")+'"></div>');
     row.appendChild(el('<div class="lab"><b>'+esc(c[1])+'</b><small>out of 10</small></div>'));
-    var stp=el('<div class="stepper"></div>');
-    var mn=el('<button class="mn">\u2013</button>'), inp=el('<input class="val" type="number" inputmode="decimal" min="0" max="10" step="0.5">'), pl=el('<button>+</button>');
-    inp.value=jd.draft[c[0]];
+    var stp=el('<div class="stepper"></div>'); steppers[c[0]]=stp;
+    var mn=el('<button class="mn">\u2013</button>'), inp=el('<input class="val" type="number" inputmode="decimal" min="0" max="10" step="0.5" placeholder="\u2013">'), pl=el('<button>+</button>');
+    var v0=jd.draft[c[0]]; inp.value=(v0===""||v0==null)?"":v0;
     function pop(){ inp.classList.remove("pop"); void inp.offsetWidth; inp.classList.add("pop"); }
-    mn.onclick=function(){ jd.draft[c[0]]=clamp(jd.draft[c[0]]-1); inp.value=jd.draft[c[0]]; pop(); refresh(); };
-    pl.onclick=function(){ jd.draft[c[0]]=clamp(jd.draft[c[0]]+1); inp.value=jd.draft[c[0]]; pop(); refresh(); };
-    inp.oninput=function(){ jd.draft[c[0]]=clamp(inp.value); refresh(); };
-    inp.onblur=function(){ inp.value=jd.draft[c[0]]; };
+    function step(delta){ var cur=(jd.draft[c[0]]===""||jd.draft[c[0]]==null)?0:Number(jd.draft[c[0]]); jd.draft[c[0]]=clamp(cur+delta); inp.value=jd.draft[c[0]]; stp.classList.remove("invalid"); jd.dirty=true; pop(); refresh(); }
+    mn.onclick=function(){ step(-1); };
+    pl.onclick=function(){ step(1); };
+    inp.oninput=function(){ if(String(inp.value).trim()===""){ jd.draft[c[0]]=""; } else { jd.draft[c[0]]=clamp(inp.value); } stp.classList.remove("invalid"); jd.dirty=true; refresh(); };
+    inp.onblur=function(){ var vv=jd.draft[c[0]]; inp.value=(vv===""||vv==null)?"":vv; };
     stp.appendChild(mn); stp.appendChild(inp); stp.appendChild(pl); row.appendChild(stp); body.appendChild(row); });
+  jd._steppers=steppers;
   tk.appendChild(body);
   var foot=el('<div class="ticket-foot"></div>');
   foot.appendChild(el('<div class="subtot">Total <b id="subtot">'+fmt(catTotal(jd.draft,round))+'</b>/ 60</div>'));
   var save=el('<button class="btn primary grow">Save & next \u203a</button>');
-  save.onclick=async function(){ save.disabled=true; save.textContent="Saving\u2026";
+  save.onclick=async function(){
+    var missing=CATS[round].filter(function(c){ var v=jd.draft[c[0]]; return v===""||v==null; });
+    if(missing.length){ missing.forEach(function(c){ if(jd._steppers&&jd._steppers[c[0]]) jd._steppers[c[0]].classList.add("invalid"); }); toast("Please score all 6 categories before moving on"); return; }
+    save.disabled=true; save.textContent="Saving\u2026";
     var row={id:sid(round,session.judge,t), round:round, judge:Number(session.judge), team:t, total:catTotal(jd.draft,round), updated_at:new Date().toISOString()};
     CATKEYS.forEach(function(k){ row["c_"+k]=Number(jd.draft[k]||0); });
-    try{ await store.saveScore(row); MY[row.id]=row; nextTeam(t); }
+    try{ await store.saveScore(row); MY[row.id]=row; jd.dirty=false; nextTeam(t); }
     catch(e){ save.disabled=false; save.textContent="Save & next \u203a"; toast("Couldn't save: "+((e&&e.message)||"check connection")); } };
   foot.appendChild(save); tk.appendChild(foot); w.appendChild(tk); a.appendChild(w); }
 function nextTeam(t){ var round=CONFIG.active_round, teams=teamsFor(round), i=teams.indexOf(t), nx=null, k;
@@ -619,9 +627,16 @@ function openFinalistsEditor(){ var rows=standings(1), cut=CONFIG.r2_teams;
   bg.appendChild(m); bg.onclick=function(e){ if(e.target===bg) document.body.removeChild(bg); };
   document.body.appendChild(bg); }
 
-function mountProgress(body){ body.innerHTML=""; body.appendChild(el('<div class="notice g">\u2713 means that judge has submitted a score for that team. Use it to know when everyone is done.</div>'));
+function mountProgress(body){ body.innerHTML="";
+  body.appendChild(el('<div class="stats" id="progcards"></div>'));
+  body.appendChild(el('<div class="notice g">Each card shows how many teams that judge has finished. \u2713 in the table = that judge has scored that team.</div>'));
   body.appendChild(el('<div class="tablewrap" id="prog"></div>')); updateProgress(); }
-function updateProgress(){ var host=$("#prog"); if(!host)return; var round=CONFIG.active_round, teams=teamsFor(round), n=numJudges();
+function updateProgress(){ var round=CONFIG.active_round, teams=teamsFor(round), n=numJudges();
+  var cards=$("#progcards");
+  if(cards){ cards.innerHTML=""; for(var jj=1;jj<=n;jj++){ (function(j){ var done=0; teams.forEach(function(t){ if(ALL[sid(round,j,t)])done++; });
+    var full=(done===teams.length && teams.length>0);
+    cards.appendChild(el('<div class="stat '+(full?"g":"r")+'"><b class="num">'+done+'/'+teams.length+'</b><small>'+esc(judgeName(j))+(full?" \u2713":"")+'</small></div>')); })(jj); } }
+  var host=$("#prog"); if(!host)return;
   var h="<table><thead><tr><th>Team</th>"; for(var j=1;j<=n;j++)h+="<th>"+esc(judgeName(j))+"</th>"; h+="</tr></thead><tbody>";
   teams.forEach(function(t){ h+="<tr><td>Team "+t+"</td>"; for(var j=1;j<=n;j++){ var has=!!ALL[sid(round,j,t)]; h+='<td><span class="mk '+(has?"ok":"no")+'">'+(has?"\u2713":"\u00b7")+'</span></td>'; } h+="</tr>"; });
   h+="</tbody></table>"; host.innerHTML=h; }
